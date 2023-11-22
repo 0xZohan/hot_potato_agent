@@ -1,0 +1,23 @@
+label: ConsensusTendermintServiceAbciApp
+alphabet_in:
+  - DONE
+  - NO_MAJORITY
+  - ROUND_TIMEOUT
+default_start_state: WaitForFundsRound
+final_states: []
+start_states:
+  - WaitForFundsRound
+states:
+  - WaitForFundsRound
+  - StartVotingRound
+  - CheckResultsRound
+  - TransferFundsRound
+transition_func:
+  (WaitForFundsRound, DONE): StartVotingRound
+  (StartVotingRound, DONE): CheckResultsRound
+  (StartVotingRound, NO_MAJORITY): StartVotingRound
+  (StartVotingRound, ROUND_TIMEOUT): WaitForFundsRound
+  (CheckResultsRound, DONE): TransferFundsRound
+  (CheckResultsRound, NO_MAJORITY): StartVotingRound
+  (TransferFundsRound, DONE): WaitForFundsRound
+  (TransferFundsRound, ROUND_TIMEOUT): WaitForFundsRound

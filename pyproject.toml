@@ -18,6 +18,12 @@ include = "packages"
 python = "^3.8"
 open-autonomy = "==0.12.1.post4"
 toml = "^0.10.2"
+open-aea-ledger-ethereum = "1.39.0.post1"
+hypothesis = "^6.90.0"
+grpcio = "^1.59.3"
+typing-extensions = "^4.8.0"
+py-ecc = "^6.0.0"
+asn1crypto = "^1.5.1"
 
 [tool.poetry.group.dev.dependencies.tomte]
 version = "==0.2.13"
