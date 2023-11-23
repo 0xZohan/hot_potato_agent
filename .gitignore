@@ -11,3 +11,5 @@ packages/valory
 leak_report
 /Pipfile.lock
 hot_potato_agent/your_agent_key.txt
+myenv
+.env
