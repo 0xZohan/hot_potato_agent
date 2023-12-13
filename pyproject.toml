@@ -24,6 +24,7 @@ grpcio = "^1.59.3"
 typing-extensions = "^4.8.0"
 py-ecc = "^6.0.0"
 asn1crypto = "^1.5.1"
+open-aea = "1.39.0.post1"
 
 [tool.poetry.group.dev.dependencies.tomte]
 version = "==0.2.13"

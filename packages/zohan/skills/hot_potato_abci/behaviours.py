@@ -19,260 +19,397 @@
 
 """This package contains round behaviours of ConsensusTendermintServiceAbciApp."""
 
+import random
 from abc import ABC
-from typing import Generator, Set, Type, cast
+from collections import Counter
+from typing import Counter, Dict, Generator, Set, Type, cast
+
 from aea.common import Address
 from aea.ledger.base import LedgerApi
+from aea.skills.base import BaseSynchronizedData
 
 from packages.valory.skills.abstract_round_abci.base import AbstractRound
 from packages.valory.skills.abstract_round_abci.behaviours import (
     AbstractRoundBehaviour,
     BaseBehaviour,
 )
-
-from packages.valory.skills.hot_potato_abci.models import Params
-from packages.valory.skills.hot_potato_abci.rounds import (
-    SynchronizedData,
-    ConsensusTendermintServiceAbciApp,
-    CheckResultsRound,
-    StartVotingRound,
-    TransferFundsRound,
-    WaitForFundsRound,
-)
-from packages.valory.skills.hot_potato_abci.rounds import (
+from packages.zohan.skills.hot_potato_abci.models import Params
+from packages.zohan.skills.hot_potato_abci.rounds import (
     CheckResultsPayload,
+    CheckResultsRound,
+    ConsensusTendermintServiceAbciApp,
     StartVotingPayload,
+    StartVotingRound,
+    SynchronizedData,
     TransferFundsPayload,
+    TransferFundsRound,
     WaitForFundsPayload,
+    WaitForFundsRound,
 )
 
 
 class ConsensusTendermintServiceBaseBehaviour(BaseBehaviour, ABC):
     """Base behaviour for the hot_potato skill."""
 
+    # This class acts as a foundation for other behaviors in a skill called 'hot_potato', which likely involves passing on an object (like a 'hot potato') under certain conditions.
+
     @property
     def synchronized_data(self) -> SynchronizedData:
         """Return the synchronized data."""
+        # Defines a special read-only property that provides access to the synchronized data held by the system.
+
         return cast(SynchronizedData, super().synchronized_data)
-    
+        # This returns the synchronized data, confirming that it is the correct type for use in this particular skill context.
+
     @property
     def current_funds(self) -> float:
         """Return the current funds of the agent."""
-        # Fetch and return the current funds of the agent
+        # Another special read-only property that gives the current balance of digital currency for the agent.
+
+        # The following line retrieves and returns the funds that the agent has.
         return self.synchronized_data.get_current_funds(self.context.agent_address)
+        # It gets the agent's address from the context (the environment that the agent operates in) and requests the agent's balance from the synchronized data.
 
     @property
     def params(self) -> Params:
         """Return the params."""
+        # This property gives access to various parameters that can be used by the behavior (like settings or configurations).
+
         return cast(Params, super().params)
+        # Returns the parameters, ensuring that they are of the correct type for use within the agent's behaviors.
+
 
 class CheckResultsBehaviour(ConsensusTendermintServiceBaseBehaviour):
     """CheckResultsBehaviour"""
-    # Logic for evaluating balance over the threshold is correct,
-    # assuming that self.params.initial_funds has been set correctly elsewhere in the code.
-    # The use of payload for a2a transactions follows the expected pattern.
+
+    # This line defines a new class called `CheckResultsBehaviour` that is based on a template for consensus services using Tendermint.
 
     matching_round: Type[AbstractRound] = CheckResultsRound
+    # This line sets up the type of 'round' that this behavior is associated with. A 'round' is a phase in the consensus process, and 'CheckResultsRound' is a specific phase where checking of results happens.
 
     def async_act(self) -> Generator:
         """Do the act, supporting asynchronous execution."""
+        # Here, we are defining a function that will be performed by the behavior. The 'async_act' indicates that this function can run in the background, allowing other tasks to happen at the same time.
+
         with self.context.benchmark_tool.measure(self.behaviour_id).local():
             sender = self.context.agent_address
-            # Check if the current agent has more than 1xDAI
+            # This creates a special context that measures how long the following code takes to run. It also retrieves the unique address of the agent (like an account number) and stores it in 'sender'.
+
             balance = self.current_funds
-            over_threshold = balance > self.params.initial_funds  # Use the threshold from initial funds.
-            # The content is boolean, whether the agent has more than 1xDAI
+            # This line checks the current 'balance' of the agent.
+
+            over_threshold = balance > self.params.initial_funds
+            # Here, we determine whether the agent's balance is more than a specified 'threshold' amount, which was set earlier in the program (in aea-config).
+
             payload = CheckResultsPayload(sender=sender, content=over_threshold)
+            # A 'payload' is a packet of data. It's created here to contain the sender's address and a true/false value indicating whether the balance is over the threshold.
 
         with self.context.benchmark_tool.measure(self.behaviour_id).consensus():
             yield from self.send_a2a_transaction(payload)
+            # This line sends the payload we created in the previous step to other participants in a process known as 'agent-to-agent' (a2a) transaction while recording how long it takes.
+
             yield from self.wait_until_round_end()
+            # This tells the agent to wait until the current phase or 'round' of the consensus process is finished.
 
         self.set_done()
+        # Finally, this line marks the behavior as completed.
 
 
 class StartVotingBehaviour(ConsensusTendermintServiceBaseBehaviour):
     """StartVotingBehaviour"""
+
+    # This line defines a new class for a behavior that starts the voting process using the Tendermint consensus method.
+
     matching_round: Type[AbstractRound] = StartVotingRound
+    # Specifies which part of the consensus process this behavior is associated with, in this case, the 'StartVotingRound'.
 
     async def _get_balance(self, ledger_api: LedgerApi, address: Address) -> int:
         """Get balance of an agent asynchronously from the ledger."""
+        # This function retrieves the digital currency balance of an agent from the blockchain ledger asynchronously, without holding up other processes.
+
         balance = await ledger_api.async_get_balance(address)
+        # Calls the function to get the balance and waits for it to respond.
+
         return balance
+        # The function then returns the numerical balance value.
 
     async def _check_balance(self, address: Address) -> bool:
         """Check if the balance is above the threshold."""
-        balance = await self._get_balance(self.context.ledger_apis.ethereum_api, address)
+        # This function checks if the agent's balance is above a certain threshold amount.
+
+        balance = await self._get_balance(
+            self.context.ledger_apis.ethereum_api, address
+        )
+        # Retrieves the balance of the agent using Ethereum's ledger API.
+
         threshold = self.context.params.initial_funds
+        # Retrieves the threshold value from the context parameters.
+
         return balance > threshold
+        # Returns True if the balance is higher than the threshold, otherwise False.
 
     async def async_act(self) -> None:
         """Perform the voting act asynchronously."""
+        # This function handles the voting action and allows it to be performed in the background.
+
         sender = self.context.agent_address
-        # Determine the eligible candidates
+        # Gets the unique identifier of the current agent, which will act as the sender in the voting.
+
         registered_agents = self.synchronized_data.registered_agents
-        candidates = [agent for agent in registered_agents if await self._check_balance(agent)]
-        # Ensure agents don't vote for an agent with already 1 xDAI
-        candidates = [agent for agent in candidates if self.synchronized_data.get_current_funds(agent) <= 1]
-        
-        # Check how many eligible candidates exist to receive the pot
+        # Retrieves a list of all agents that have registered for voting.
+
+        candidates = [
+            agent for agent in registered_agents if await self._check_balance(agent)
+        ]
+        # Filters out agents who have a balance higher than the threshold to create a list of eligible voting candidates.
+
+        candidates = [
+            agent
+            for agent in candidates
+            if self.synchronized_data.get_current_funds(agent) <= 1
+        ]  # I think i need to make this contract (token id) specific
+        # Removes candidates that already have more than 1 unit of the digital currency, narrowing down to those eligible to receive a vote. - maybe these needs to be changed to 10^18? (hexadecimal format)
+
         if not candidates:
-            self.context.logger.info("No eligible candidates to receive the pot.")
+            self.context.logger.info(
+                "No eligible candidates to receive the hot potato."
+            )
             return
+        # If there are no eligible candidates, log an informative message and end the execution of this function.
+
         if len(candidates) == 1:
             receiver = candidates[0]
+        # If only one candidate is eligible, they automatically become the receiver of the vote.
+
         else:
-            # Randomly select a candidate to receive the pot
             receiver = random.choice(candidates)
+            # If multiple candidates are eligible, randomly select one as the receiver.
 
         payload = StartVotingPayload(sender=sender, vote_for_receiver=receiver)
+        # Creates a data package ('payload') containing the sender's info and the chosen voting receiver.
+
         self.context.logger.info(f"Voting for agent {receiver}")
+        # Logs which agent is being voted for.
 
-        # Send the payload as an AEA transaction
-        await self.context.outbox.put_message(message=payload)  # Replace with suitable method to send the payload
-        await self.wait_until_round_end()  # Replace with suitable async waiting method from your framework
+        await self.context.outbox.put_message(message=payload)
+        # Sends the created payload to the network for processing in the voting.
 
-        self.set_done()  # Mark the behavior as done
+        await self.wait_until_round_end()
+        # Waits for the current voting round to conclude before proceeding.
+
+        self.set_done()
+        # Marks this voting behavior as completed.
 
 
 class TransferFundsBehaviour(ConsensusTendermintServiceBaseBehaviour):
     """This behaviour manages the fund transfer actions."""
-    
+
+    # This class is designed for managing the action of transferring funds from one participant to another.
+
     matching_round: Type[AbstractRound] = TransferFundsRound
+    # It defines that this behavior is part of a 'TransferFundsRound', a specific phase in a series of steps where funds will be transferred.
 
     async def _perform_transfer(self, receiver: str, amount: int) -> None:
         """Perform the fund transfer action."""
-        # Placeholder for the actual transaction call, which should interact with the blockchain
-        # For example, if interacting with Ethereum, you may need to use the web3 library:
-        # txn = {'to': receiver, 'value': web3_instance.toWei(amount, 'ether'), 'gas': gas_estimate, ...}
-        # tx_hash = self.context.ledger_apis.ethereum_api.send_transaction(txn)
-        #
-        # This is highly simplified; you need to consider nonce, gas price strategy, signing, etc.
-        self.context.logger.info(f"Sending {amount} xDAI to receiver {receiver}")
+        # This is a private method that carries out the actual transfer of funds to the receiver.
 
-        # Submit the transaction to the blockchain via the ledger API
-        tx_receipt = await self.context.ledger_apis.ethereum_api.send_transaction(...)
-        
-        # Log the transaction receipt
+        self.context.logger.info(f"Sending {amount} xDAI to receiver {receiver}")
+        # Logs a message about the transfer that's about to happen, showing how much money is being sent and to whom.
+
+        tx_receipt = await self.context.ledger_apis.ethereum_api.send_transaction(
+            ...
+        )  # TBC - logic to be implemented
+        # Sends out the transaction to the blockchain and waits for a confirmation receipt, which acts like a proof of transaction.
+
         if tx_receipt:
             self.context.logger.info(f"Transaction receipt: {tx_receipt}")
+            # If the transaction is successful and a receipt is received, log the details of that receipt.
 
         return tx_receipt
+        # Return the transaction receipt, this could be used for record-keeping or verification.
 
     async def async_act(self) -> None:
         """Perform the round's action asynchronously."""
-        # Access the synchronized data to get the selected receiver and funds
-        receiver = self.synchronized_data.get_selected_receiver()
-        amount = 1  # Amount of xDAI to send, ensure proper denomination conversion as needed
+        # This is the main method that is called to execute the behavior; it manages the transfer of funds in a non-blocking way.
 
-        # Note: Ensure there's a mechanism to establish who the sender is and they have sufficient funds
-        
+        receiver = self.synchronized_data.get_selected_receiver()
+        # Determines who will receive the funds based on some previous selection process.
+
+        amount = (
+            1  # Amount of xDAI to send, ensure proper denomination conversion as needed
+        )
+        # Specifies a fixed amount to transfer. In this case, 1 xDAI. (needs to be hexidecimal format 10^18 - maybe reference aea-config instead of hardcoding)
+
         if receiver:
             tx_receipt = await self._perform_transfer(receiver, amount)
-            # Store or handle the transaction receipt. Update synchronized_data if necessary.
-            self.synchronized_data.set_last_transaction_receipt(tx_receipt)
-        
-        # Wait until the round ends or until the transfer is confirmed
-        # The method below assumes you have async waiting capabilities matching your framework
-        await self.wait_until_round_end()
+            # Calls the previously defined method to perform the transfer and waits to get the transaction receipt.
 
-        # Assuming this behavior runs once per majority decision
+            self.synchronized_data.set_last_transaction_receipt(tx_receipt)
+            # Stores the transaction receipt in synchronized data, which is shared and kept in sync across different parts of the program.
+
+        await self.wait_until_round_end()
+        # Waits for the current round of the consensus process to be completed.
+
         self.set_done()
+        # Sets the status of this behavior as done, indicating the transfer is complete.
 
 
 class WaitForFundsBehaviour(ConsensusTendermintServiceBaseBehaviour):
     """This behaviour manages waiting for confirmation of fund transfers."""
-    
+
+    # This class handles the process of checking whether a transfer of funds to a receiver has been completed.
+
     matching_round: Type[AbstractRound] = WaitForFundsRound
+    # It indicates that this behavior corresponds to a specific part of the process called 'WaitForFundsRound'.
 
     async def _check_funds_received(self, receiver: str, expected_amount: int) -> bool:
         """Check if the recipient has received the expected amount."""
+        # This is an internal method that checks if the receiver has gotten the amount of money that was supposed to be sent.
+
         self.context.logger.info(f"Checking funds received by {receiver}.")
-        balance = await self._get_balance(self.context.ledger_apis.ethereum_api, receiver)
+        # Logs a message that a check is being made for the funds received by the receiver.
+
+        balance = await self._get_balance(
+            self.context.ledger_apis.ethereum_api, receiver
+        )
+        # Calls a function to get the receiver's current balance from the blockchain ledger and waits for the response.
+
         return balance >= expected_amount
+        # Returns True if the balance is equal to or greater than the expected amount, indicating that the funds were received. - ensure this is basically a balance > 1
 
     async def async_act(self) -> None:
         """Perform async action to confirm funds are received."""
+        # The main method to be executed, which manages the checking of whether the funds have been received in a non-blocking way.
+
         receiver = self.synchronized_data.get_selected_receiver()
+        # Finds out who was supposed to receive the funds according to previously synchronized data.
+
         amount = 1  # Expected amount received, set to 1 xDAI for now
+        # The amount expected to have been received, here it's set to a fixed value of 1 xDAI.
 
         funds_received = await self._check_funds_received(receiver, amount)
+        # Calls the internal method to check if the funds were received and waits for confirmation.
+
         if funds_received:
-            self.context.logger.info(f"Confirmed {receiver} has received {amount} xDAI.")
+            self.context.logger.info(
+                f"Confirmed {receiver} has received {amount} xDAI."
+            )
+            # If the funds were received, logs a confirmation message.
+
         else:
             self.context.logger.error(f"Funds not received by {receiver}!")
+            # Otherwise, logs an error message saying the funds were not received.
 
-        # Sleep/wait for some time if needed
-        # wait_time = 30  # Time to wait for funds to be confirmed in seconds
-        # await asyncio.sleep(wait_time)  # Use asyncio or other appropriate methods based on your agent framework
-        
-        # Once confirmation is complete or time has passed, set the round to be done
+        # If there was a need to wait a certain amount of time before moving on, the code would pause here.
+        # wait_time = 30  # Represents how long you would wait in seconds.
+        # await asyncio.sleep(wait_time)  # This line would make the program wait for that specified time.
+
         self.set_done()
-
+        # Marks this behavior as finished, meaning the check for funds receipt is complete.
 
 
 class ConsensusTendermintServiceRoundBehaviour(AbstractRoundBehaviour):
     """Manage the sequencing of round behaviours in the consensus service."""
-    
+
+    # This class is responsible for managing the order in which different behaviors occur as part of the consensus process using Tendermint, a blockchain consensus algorithm.
+
     initial_behaviour_cls = WaitForFundsBehaviour  # The first behaviour to start
-    abci_app_cls = ConsensusTendermintServiceAbciApp  # Your custom Tendermint ABCI app class
+    # Specifies that the first action in the sequence is to wait for confirmation of fund transfers.
+
+    abci_app_cls = (
+        ConsensusTendermintServiceAbciApp  # Your custom Tendermint ABCI app class
+    )
+    # Identifies the specific application class that interfaces with the Tendermint consensus, meaning it's the part that actually talks to the blockchain.
+
     behaviours: Set[Type[BaseBehaviour]] = {
         CheckResultsBehaviour,
         StartVotingBehaviour,
         TransferFundsBehaviour,
         WaitForFundsBehaviour,
     }
+    # This is a list of all the different behaviors that this class manages. Each behavior represents a specific task or action that takes place during the consensus process.
 
     def setup(self) -> None:
         """Set up the round behaviours."""
-        # Perform any necessary setup for the round behaviours here.
-        # May involve initializing shared resources or state, etc.
-        pass
+        # This function is used to prepare everything that's necessary before the behaviors start running. It could be used to initiate resources or set up initial state.
+
+        pass  # Currently, it does nothing and acts as a placeholder.
 
     def act(self) -> None:
         """Implement the logic to sequence round behaviours."""
-        # Check the current state and decide which behaviour to run based on the state.
-        # Transition from one behaviour to the next appropriately. This could be based
-        # on events, conditions or messages received, etc.
-        pass
+        # The main function that determines the order of operations for the behaviors. It decides which behavior to execute next based on the current state, events that have happened, or messages received.
 
-    # Include any additional methods necessary for managing the round transitions here.
+        pass  # Like the setup function, it currently does nothing and serves as a placeholder for actual sequencing logic.
+
+    # Additional helper methods for managing the behavior transitions can be added to this class, following the pattern of setup and act methods.
+
 
 class SynchronizedData(BaseSynchronizedData):
     """Handle the synchronized data across behaviours and rounds."""
 
+    # This class is designed to keep certain data in sync across different parts of the program. This helps ensure that different components are working with the same information, which is crucial in a process that requires consensus.
+
     def __init__(self):
         """Initialize the synchronized data."""
         super().__init__()
+        # This is a constructor method that sets up the class. It calls an initialization method from its parent class to make sure it has all the necessary underlying functionality.
+
         self._funds = {}  # Keeps track of funds for each agent
+        # This creates an empty dictionary to store how much digital currency each agent (participant) has.
+
         self._votes = {}  # Keeps track of votes each round
+        # This sets up an empty dictionary to record the votes that are made during a round of consensus.
+
         self.selected_receiver = None  # Agent selected to receive funds
+        # Here is a placeholder for storing the identifier of the agent who has been chosen to receive funds after a round of voting.
+
         self.last_transaction_hash = None  # Store the last transaction hash
-        # Initialize any additional shared state here
+        # This holds the identifier for the last fund transfer transaction that occurred. It serves as a reference to confirm that a transaction has been completed.
 
     def get_current_funds(self, agent_address: str) -> float:
         """Get the current funds for the given agent."""
+        # This method retrieves the amount of funds available to a specific agent.
+
         return self._funds.get(agent_address, 0.0)
+        # It looks up the agent's address in the funds dictionary and returns the balance. If the agent isn't listed, it defaults to 0.0.
 
     def set_current_funds(self, agent_address: str, funds: float) -> None:
         """Set the current funds for the given agent."""
+        # This method updates the funds for a particular agent.
+
         self._funds[agent_address] = funds
+        # It assigns the new funds value to the agent's entry in the funds dictionary.
 
     def add_vote(self, agent_address: str, receiver: str) -> None:
         """Add a vote for a given receiver."""
+        # Adds a record of a vote from an agent for a particular receiver.
+
         self._votes[agent_address] = receiver
+        # It stores the receiver chosen by an agent inside the votes dictionary.
 
     def get_votes(self) -> Dict[str, str]:
         """Get all current votes."""
+        # Retrieves all the recorded votes.
+
         return self._votes
+        # Simply returns the dictionary containing the votes.
 
     def reset_votes(self) -> None:
         """Reset votes for a new round."""
+        # Clears out the votes in preparation for a new round of voting.
+
         self._votes.clear()
+        # Empties the votes dictionary so it can be filled with fresh data in the next round.
 
     def count_votes(self) -> Dict[str, int]:
         """Count and return the votes for each receiver."""
+        # Tallies up the votes and shows how many each receiver got.
+
         vote_counts = Counter(self._votes.values())
+        # Creates a count of all the votes from the votes dictionary.
+
         return dict(vote_counts)
+        # Turns the count into a dictionary where each receiver's address is a key and their vote total is the value.
 
     # Additional methods needed for the business logic
+    # There might be more methods below this comment which are necessary for the specific rules and processes of the business logic.

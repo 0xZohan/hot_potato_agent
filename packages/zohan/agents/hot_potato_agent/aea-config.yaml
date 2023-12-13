@@ -63,7 +63,7 @@ type: skill
 models:
   params:
     args:
-      initial_funds: 1
+      initial_funds: 0.1
       hot_potato_threshold: 1
       transaction_gas_fee: 0.1
       tendermint_url: ${str:http://localhost:26657}

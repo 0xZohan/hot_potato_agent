@@ -24,27 +24,31 @@ from typing import Optional
 
 from packages.valory.skills.abstract_round_abci.base import BaseTxPayload
 
+
 @dataclass(frozen=True)
 class CheckResultsPayload(BaseTxPayload):
     """Represent a transaction payload for the CheckResultsRound."""
-    over_threshold: bool  # Attribute indicating if the sender's balance is over 1xDAI
+
+    over_threshold: bool
+
 
 @dataclass(frozen=True)
 class StartVotingPayload(BaseTxPayload):
     """Represent a transaction payload for the StartVotingRound."""
-    sender: str  # The agent sending the payload
-    vote_for_receiver: str  # Vote cast by the sender on which agent should receive the next 1xDAI
+
+    vote_for_receiver: str
+
 
 @dataclass(frozen=True)
 class TransferFundsPayload(BaseTxPayload):
     """Represent a transaction payload for the TransferFundsRound."""
-    sender: str  # The agent responsible for sending the funds
-    transaction_hash: str  # Hash of the transaction of the on-chain fund transfer
-    receiver: str  # The recipient agent of the 1xDAI
+
+    transaction_payload: dict  # This must match the actual fund transfer transaction details
+
 
 @dataclass(frozen=True)
 class WaitForFundsPayload(BaseTxPayload):
     """Represent a transaction payload for the WaitForFundsRound."""
-    sender: str  # The agent sending the payload
-    received: bool  # Confirmation on whether the sender has received the funds
-    transaction_hash: Optional[str] = None  # Transaction hash if the funds are received
+
+    received: bool
+    transaction_hash: Optional[str] = None

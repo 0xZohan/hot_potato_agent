@@ -19,9 +19,9 @@
 
 """This package contains round behaviours of ConsensusTendermintServiceAbciApp."""
 
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Hashable, Optional, Type
-from dataclasses import dataclass, field
 
 import pytest
 
@@ -31,27 +31,26 @@ from packages.valory.skills.abstract_round_abci.behaviours import (
     BaseBehaviour,
     make_degenerate_behaviour,
 )
+from packages.valory.skills.abstract_round_abci.test_tools.base import (
+    FSMBehaviourBaseCase,
+)
 from packages.valory.skills.hot_potato.behaviours import (
+    CheckResultsBehaviour,
     ConsensusTendermintServiceBaseBehaviour,
     ConsensusTendermintServiceRoundBehaviour,
-    CheckResultsBehaviour,
     StartVotingBehaviour,
     TransferFundsBehaviour,
     WaitForFundsBehaviour,
 )
 from packages.valory.skills.hot_potato.rounds import (
-    SynchronizedData,
+    CheckResultsRound,
+    ConsensusTendermintServiceAbciApp,
     DegenerateRound,
     Event,
-    ConsensusTendermintServiceAbciApp,
-    CheckResultsRound,
     StartVotingRound,
+    SynchronizedData,
     TransferFundsRound,
     WaitForFundsRound,
-)
-
-from packages.valory.skills.abstract_round_abci.test_tools.base import (
-    FSMBehaviourBaseCase,
 )
 
 
@@ -173,4 +172,3 @@ class TestWaitForFundsBehaviour(BaseConsensusTendermintServiceTest):
         # TODO: mock the necessary calls
         # self.mock_ ...
         self.complete(test_case.event)
-

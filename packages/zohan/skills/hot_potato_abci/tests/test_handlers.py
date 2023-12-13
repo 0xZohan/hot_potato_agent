@@ -24,4 +24,3 @@ import packages.valory.skills.hot_potato.handlers  # noqa
 
 def test_import() -> None:
     """Test that the 'handlers.py' of the ConsensusTendermintService can be imported."""
-
