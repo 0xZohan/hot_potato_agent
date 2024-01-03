@@ -19,31 +19,17 @@
 
 """This package contains the rounds of ConsensusTendermintServiceAbciApp."""
 
-import random
-import time
 from enum import Enum
-from typing import Dict, FrozenSet, List, Optional, Set, Tuple, Generator
+from typing import Dict, FrozenSet, Optional, Set, Tuple
 from collections import Counter
-import requests
-from aea.exceptions import AEAEnforceError
-from aea.protocols.base import Message
-from aea.context.base import Context
-from aea.contracts.base import Contract
-from aea.ledger.ethereum import EthereumApi
-from packages.valory.connections.ledger.base import LedgerApiMessage
-from aea.skills.behaviours import TickerBehaviour
 from packages.valory.skills.abstract_round_abci.base import (
     VotingRound,
-)
-from packages.zohan.skills.hot_potato_abci.payloads import (
-    StartVotingPayload,
 )
 from packages.zohan.skills.hot_potato_abci.rounds import Event, SynchronizedData
 
 from packages.valory.skills.abstract_round_abci.base import (
     AbciApp,
     AbciAppTransitionFunction,
-    AbstractRound,
     AppState,
     BaseSynchronizedData,
     DegenerateRound,
@@ -54,7 +40,6 @@ from packages.valory.skills.abstract_round_abci.base import (
 
 from packages.zohan.skills.hot_potato_abci.payloads import (
     CheckResultsPayload,
-    StartVotingPayload,
     TransferFundsPayload,
     WaitForFundsPayload,
 )
@@ -79,6 +64,8 @@ class Event(Enum):
     CONSENSUS_REACHED = "consensus_reached" #I added this manually - do I need to change anything else - how does the application know to say this when consensus is reached?
     # Indicates that a consensus has been reached, which is the goal of the consensus process.
 
+    NFT_TRANSFER_DETECTED = "nft_transfer_detected"
+
 
 class SynchronizedData(BaseSynchronizedData):
     """Class to represent the synchronized data."""
@@ -88,9 +75,8 @@ class SynchronizedData(BaseSynchronizedData):
         super().__init__()
         self.selected_receiver: Optional[str] = None
         self.last_transaction_hash: Optional[str] = None
-        self.current_holder: Optional[str] = None
+        self.current_nft_owner: Optional[str] = None
         self.registered_agents: Set[str] = set()
-        self.agent_amounts: Dict[str, int] = {}
 
     def update_selected_receiver(self, receiver: str) -> 'SynchronizedData':
         """Update the selected receiver."""
@@ -102,20 +88,19 @@ class SynchronizedData(BaseSynchronizedData):
         self.last_transaction_hash = transaction_hash
         return self
 
-    def update_current_holder(self, current_holder: str) -> 'SynchronizedData':
-        """Update the current holder."""
-        self.current_holder = current_holder
+    def update_current_nft_owner(self, holder: str) -> 'SynchronizedData':
+        """Update the current NFT owner."""
+        self.current_nft_owner = holder
         return self
 
     def add_registered_agent(self, agent: str) -> 'SynchronizedData':
         """Add a registered agent."""
         self.registered_agents.add(agent)
         return self
-
-    def set_current_funds(self, agent: str, amount: int) -> 'SynchronizedData':
-        """Set the current funds for an agent."""
-        self.agent_amounts[agent] = amount
-        return self
+    
+    def nft_owner(self) -> Optional[str]:
+        """Get the current NFT owner."""
+        return self.current_nft_owner
 
     def update_vote(self, agent: str, vote: str) -> 'SynchronizedData':
         """Update the vote for an agent."""
@@ -124,360 +109,203 @@ class SynchronizedData(BaseSynchronizedData):
     # The "SynchronizedData" class is intended to maintain data that should be kept consistent across various parts of the Tendermint application. This kind of data often includes shared state or information that must be agreed upon by all parts of the system, like the current state of transactions or the consensus process.
 
 class CheckResultsRound(VotingRound):
-    """CheckResultsRound"""
-    # This class represents a specific stage in the voting process where the results are checked.
-
-    payload_class = CheckResultsPayload
-    # Defines what type of data is expected to be handled during this round. It will work with 'CheckResultsPayload', which is likely a data structure storing whether an agent's balance is above a threshold.
-
-    payload_attribute = "over_threshold"  # Payload attribute updated as per the actual content
-    # Tells the system which particular piece of information from the payload it needs to focus on, in this case, whether or not an agent's balance is over a certain threshold.
+    """This round checks the voting results and determines the next NFT holder."""
+    payload_class = CheckResultsPayload  # Assuming this payload includes the voting data
+    payload_attribute = "receiver_candidate"  # Attribute will be the candidate each agent is voting for
 
     synchronized_data_class = SynchronizedData
-    # Specifies the class that will be used to manage and access synchronized data during this round.
 
     def end_block(self) -> Optional[Tuple[BaseSynchronizedData, Enum]]:
-        """End the block and update synchronized_data."""
+        """End the block and determine the next NFT holder."""
 
-        over_threshold_votes = self.synchronized_data.get_votes_with_condition(True)
-
-        if len(over_threshold_votes) == 0:
+        votes = self.synchronized_data.get_votes()
+        if not votes:
             return self.synchronized_data, Event.NO_MAJORITY
 
-        if len(over_threshold_votes) > 1:
-            raise Exception("Multiple agents have a balance over the threshold.")
+        # Count the votes for each agent
+        vote_count = Counter(votes.values())
+        if not vote_count:
+            return self.synchronized_data, Event.NO_MAJORITY
 
-        majority_vote = over_threshold_votes.pop()
+        # Determine the majority vote
+        receiver_candidate, _ = vote_count.most_common(1)[0]
 
-        # Use the synchronized_data class's update method to set the selected receiver.
-        # Assume the method 'update_selected_receiver' has been defined in the SynchronizedData.
-        synchronized_data = self.synchronized_data.update_selected_receiver(majority_vote)
-        
-        if synchronized_data.is_update_successful():  # Assume this method checks if the update was successful
-            return synchronized_data, Event.CONSENSUS_REACHED
+        if receiver_candidate:
+            # Found a candidate with majority votes, set as next receiver (or new NFT holder)
+            self.synchronized_data.update_selected_receiver(receiver_candidate)
+            self.context.logger.info(f"Agent {receiver_candidate} has been voted as the next NFT holder.")
+            return self.synchronized_data, Event.CONSENSUS_REACHED
         else:
-            return synchronized_data, Event.UPDATE_FAILED
+            # No clear majority; handle as required, for example, by starting a new round of voting
+            return self.synchronized_data, Event.NO_MAJORITY
 
     def check_payload(self, payload: CheckResultsPayload) -> None:
         """Check payload."""
-        # Ensures that the incoming payload (the data package) is correctly formatted. It's expected to be a boolean of whether the agent's balance is over 1xDAI.
-
-        if not isinstance(payload.content, bool):
-            raise ValueError("Payload content is not a boolean indicating balance threshold status.")
-            # If the payload content isn't a true/false value, raises a ValueError as that's not expected.
+        # Update the payload verification logic to fit the new voting structure
+        if not isinstance(payload.receiver_candidate, str):
+            raise ValueError("Payload content does not contain a valid agent address.")
 
     def process_payload(self, payload: CheckResultsPayload) -> None:
-        """Process payload."""
-        # This method takes the incoming payload and uses it to update the synchronized data with information on who has funds above or below the threshold.
+        """Process the incoming payload to record the votes."""
+        self.synchronized_data.add_vote(payload.sender, payload.receiver_candidate)
 
-        if payload.over_threshold:
-            self.synchronized_data.add_vote(payload.sender, True)
-        else:
-            self.synchronized_data.add_vote(payload.sender, False)
-        # Adds a 'vote' to the synchronized data based on whether the agent's balance was over the threshold.
-
-    # The remaining methods, `is_valid_agent_identifier` and `get_balance_from_rpc`, are placeholders for logic that would validate the format of agent identifiers and query a blockchain over a network for an agent's balance, respectively. They illustrate how such a system might interact with an actual blockchain network to retrieve data, but they're not fully implemented here and would require more details based on a specific blockchain.
-
-
-class StartVotingRound(VotingRound):
-    """StartVotingRound"""
-    # The attributes and other parts of the class remain unchanged
+class StartVotingRound(VotingRound): #I've inputted this in rounds.py, but something is telling me the logic of the voting itself should be in behaviours.py - is this correct?
+    """Round where agents vote for the next NFT holder."""
 
     async def async_act(self) -> None:
         """
-        Perform the round's action asynchronously where the voting logic of your skill is implemented.
+        Initiate the voting round asynchronously.
         """
-        candidates = list(self.synchronized_data.registered_agents - {self.synchronized_data.current_holder})
+        # Get the current NFT owner from the SynchronizedData
+        nft_owner = self.synchronized_data.nft_owner()
+        # Prepare the list of candidates who can be voted for (all agents except the NFT owner)
+        candidates = list(self.synchronized_data.registered_agents - {nft_owner})
 
         votes = {}
+        # Iterate over all registered agents to collect their votes
         for agent in self.synchronized_data.registered_agents:
-            if agent != self.synchronized_data.current_holder:
-                can_vote = await self._check_balance(agent)
-                if can_vote and candidates:
-                    vote = random.choice(candidates)
+            if agent != nft_owner:  # The current NFT owner should not vote
+                vote = self.collect_vote(agent, candidates)
+                if vote:
                     votes[agent] = vote
                     self.context.logger.info(f"Agent {agent} voted for {vote}")
                 else:
-                    self.context.logger.info(f"Agent {agent} cannot vote due to balance constraints or no candidates available.")
+                    self.context.logger.info(f"Agent {agent} cannot vote; no candidates are available or ineligible to vote.")
 
-        # Assuming a method to cast votes is defined - cast_votes
-        self.cast_votes(votes)
-
-
-    # async def _get_balance(self, agent: str) -> Generator[None, None, Optional[int]]:
-    #     """Get the balance of the specified agent asynchronously using ledger API."""
-    #     # An asynchronous function for retrieving an agent's balance from a ledger, using the `ledger_api` defined earlier.
-
-    #     balance = await self.ledger_api.get_balance(agent) #no business logic here - determines when the state changes, shouldn't check the balance etc 
-    #     # The balance lookup happens asynchronously and waits for the ledger's response.
-
-    #     return balance
-
-    # async def _check_balance(self, agent: str) -> bool: 
-    #     """Check if the given agent's balance is over the threshold."""
-    #     # Another asynchronous function that checks if an agent's balance exceeds a defined amount (threshold).
-
-    #     balance = None
-    #     while balance is None:
-    #         balance = await self._get_balance(agent)
-    #     # It continuously attempts to retrieve the balance until successful.
-
-    #     threshold = 1  # Replace 1 with the actual threshold value in xDAI equivalent.
-    #     # The 'threshold' is the balance limit we're interested in checking against.
-
-    #     return balance > threshold
-
-    #     # Wait for the end of the round
-    #     # Your framework would likely provide a method to wait for the end of the voting round, which would go here.
-
-    # def check_payload(self, payload: StartVotingPayload) -> None:
-    #     """
-    #     Check the payload to ensure it is a valid vote.
-    #     """
-    # # Retrieves the balance of the agent that is voted for.
-    #     receiver_balance = self.synchronized_data.get_current_funds(payload.vote_for_receiver)
-    
-    # # Considering the initial 0.1 xDAI for gas, balance should not exceed 1.1 xDAI.
-    #     balance_threshold = 1.0 + 0.1  # Adjust the threshold based on your game rules.
-    #     balance_sufficient = receiver_balance <= balance_threshold
-    
-    # # Confirms the validity of the data received.
-    #     if not balance_sufficient:
-    #         raise ValueError(f"Agent identified in 'vote_for_receiver' ({payload.vote_for_receiver}) holds more than the expected balance limit.")
-
-    # def process_payload(self, payload: StartVotingPayload) -> None:
-    #     """
-    #     Process payload to record the vote.
-    #     """
-    #     # Records the vote by updating the synchronized data to reflect the newly received vote information.
-    #     self.synchronized_data.update_vote(payload.sender, payload.vote_for_receiver)
-
-    # def cast_votes(self, votes: Dict[str, str]) -> None:
-    #     """
-    #     Placeholder for casting votes. This method should ensure that only non-state-changing
-    #     actions are taken, such as logging or emitting events that will be used by the `end_block` method.
-    #     """
-    #     # Log votes or emit events that will be used by the `end_block` method
-    #     for voter, voted_for in votes.items():
-    #         self.context.logger.info(f"Voter {voter} cast vote for {voted_for}")
-    #         # Note: Actual vote casting logic that modifies `SynchronizedData` should occur in `end_block`
+        # Cast collected votes
+        for agent, vote in votes.items():
+            self.synchronized_data.update_vote(agent, vote)
 
     def end_block(self) -> Optional[Tuple[BaseSynchronizedData, Enum]]:
         """
-        End the block by processing votes and updating synchronized_data accordingly.
+        Culminate the block by processing votes and deciding on the next steps.
         """
-        # Retrieve the necessary information for this round from `SynchronizedData`
-        votes = ...  # Retrieve votes for this round from logged events or local storage
+        # Retrieve the compiled votes from SynchronizedData
+        votes = self.synchronized_data.get_votes()
 
-        # Perform updates to `SynchronizedData` based on the votes
-        for voter, voted_for in votes.items():
-            self.synchronized_data.update_vote(voter, voted_for)
-
-        # Advance to the next round or handle a no-majority event
-        if ... :  # Check if some condition is met to advance the round
-            return self.synchronized_data, Event.DONE
+        # Tally the votes and decide on the next NFT holder
+        if votes:
+            vote_count = Counter(votes.values())
+            # Determine the next NFT holder (if a majority vote exists)
+            next_holder, number_of_votes = vote_count.most_common(1)[0]
+            if number_of_votes > len(votes) / 2:
+                # A majority vote is detected, set the next NFT holder
+                self.synchronized_data.update_selected_receiver(next_holder)
+                return self.synchronized_data, Event.DONE
+            else:
+                # No majority vote found
+                return self.synchronized_data, Event.NO_MAJORITY
         else:
+            # No votes have been cast
             return self.synchronized_data, Event.NO_MAJORITY
 
 
-class TransferFundsRound(OnlyKeeperSendsRound):
-    """TransferFundsRound"""
-    # This class handles the part of the consensus process where funds are actually transferred.
+class TransferNFTRound(OnlyKeeperSendsRound):
+    """TransferNFTRound"""
+    # This class handles the part of the consensus process where NFT ownership is transferred.
 
-    payload_class = TransferFundsPayload
-    # Specifies the type of data this round will handle—a 'TransferFundsPayload', which would contain the information needed to execute a fund transfer.
-
-    payload_attribute = "transaction_payload"  # Updated to represent the DAI transfer payload
-    # Indicates the specific attribute of the payload that's important for this round. In this case, it's the details of the transaction that will transfer funds.
+    payload_class = TransferFundsPayload  # This should likely be renamed or reused to contain NFT transfer confirmation data.
+    payload_attribute = "transaction_payload"  # This attribute might need to be updated to fit NFT transfer confirmation.
 
     synchronized_data_class = SynchronizedData
-    # Identifies the class that's responsible for storing and managing data that needs to be kept in sync among different components during this round.
 
     def end_block(self) -> Optional[Tuple[BaseSynchronizedData, Enum]]:
-        """End the block by updating synchronized_data with the transaction result."""
+        """End the block by confirming the NFT transfer."""
+        # Logic to check if the NFT transfer has been confirmed
+        # This could involve checking a condition that determines if the round should end
 
-        # Retrieve the transaction hash from an external event or process
-        transaction_hash = ... # Retrieve transaction_hash that resulted from the fund transfer
-        receiver = self.synchronized_data.get_selected_receiver()
+        new_nft_owner = self.synchronized_data.get_selected_receiver()
+        last_transaction_hash = self.synchronized_data.last_transaction_hash
 
-        if receiver and transaction_hash:
-            # Update the synchronized data with the transaction hash and receiver's balance
-            synchronized_data = self.synchronized_data.update_last_transaction_hash(transaction_hash)
-            synchronized_data.set_current_funds(receiver, 1)  # Assumes that the receiver now has exactly 1 xDAI after the transfer
+        if new_nft_owner and last_transaction_hash:
+            # Confirm the new NFT owner in SynchronizedData
+            self.synchronized_data.update_current_nft_owner(new_nft_owner)
             
-            return synchronized_data, Event.DONE
+            # Log the confirmation of the NFT transfer and end the round
+            self.context.logger.info(f"NFT has been successfully transferred to {new_nft_owner}.")
+            return self.synchronized_data, Event.DONE
         else:
-            raise Exception("No transaction hash or receiver selected for transfer.")
-
-    # def perform_transfer(self, receiver: str) -> str:
-    #     # A method intended to actually carry out the fund transfer.
-    #     # It's a placeholder here, and the real implementation would involve interacting with the blockchain and returning a unique identifier for the transaction ('transaction_hash').
-
-    #     transaction_hash = "dummy_tx_hash"  # Placeholder for a real transaction hash that you would get from the blockchain.
-    #     return transaction_hash
-
-    # def end_block(self) -> Optional[Tuple[BaseSynchronizedData, Enum]]:
-    #     # Called at the end of the round, assuming all actions have been performed and it's time to wrap up and prepare for the next step.
-
-    #     receiver = self.synchronized_data.get_selected_receiver()
-    #     # Gets the recipient who has been chosen to receive the funds.
-
-    #     if receiver:
-    #         transaction_hash = self.perform_transfer(receiver)
-    #         # Executes the fund transfer to the chosen recipient and gets the transaction hash as a receipt.
-
-    #         self.synchronized_data.last_transaction_hash = transaction_hash
-    #         # Stores the transaction hash in the synchronized data for future reference.
-
-    #         self.synchronized_data.set_current_funds(receiver, 1)  # Assumes the receiver now has exactly 1 xDAI after the transfer.
-    #         # Updates the synchronized data to reflect the new balance of the receiver.
-
-    #         return self.synchronized_data, Event.DONE
-    #         # Returns the updated synchronized data and an event signifying that the round is complete.
-
-    #     else:
-    #         raise Exception("No receiver selected for transfer.")
-    #         # If no recipient has been set, it raises an error because the transfer cannot proceed.
-
-    # def check_payload(self, payload: TransferFundsPayload) -> None: #do i need this?
-    #     """Check payload."""
-    #     # This method would validate the data received in the payload to ensure it's correct before processing. 
-    #     # It isn't implemented in this placeholder and raises an error, indicating that you will need to implement it as needed.
-
-    #     raise NotImplementedError
-
-    # def process_payload(self, payload: TransferFundsPayload) -> None: #do i need this?
-    #     """Process payload."""
-    #     # This would be the method to handle and act upon the received payload data, updating any necessary state or performing actions based on the payload.
-    #     # Like checking, it's not implemented here and requires proper implementation if needed.
-
-    #     raise NotImplementedError
-
-
-class WaitForFundsRound(DegenerateRound):
-    """WaitForFundsRound"""
-    # This class represents a phase in the consensus process where agents (participants in the network) wait for confirmation that funds have been successfully transferred.
-
-    payload_class = WaitForFundsPayload
-    # Indicates the type of data this round will handle—a 'WaitForFundsPayload'. The payload should carry information regarding fund transfer confirmation.
-
-    payload_attribute = "confirmation"  # Assume this is a simple boolean confirmation
-    # Points to a specific piece of information in the payload that's important for this round, which would be a simple true/false (boolean) value indicating whether the funds were received.
-
-    synchronized_data_class = SynchronizedData
-    # Specifies that this round will rely on the 'SynchronizedData' class for its shared, consistent data needs.
-
-    # During this round, agents are expected to wait for the blockchain network to confirm that a fund transfer has occurred successfully, typically verified by ensuring that the intended recipient's balance has increased.
-
-    def end_block(self) -> Optional[Tuple[BaseSynchronizedData, Enum]]:
-        """
-        End the block by processing confirmations of fund transfers.
-        In an event-driven model, this should be triggered by an external event.
-        """
-        # Check if the external event has occurred
-        transaction_confirmed = self._is_transaction_confirmed()
-        if transaction_confirmed:
-            # Update SynchronizedData with the transaction confirmation status
-            synchronized_data = self.synchronized_data.update_with_confirmation(
-                transaction_confirmed
-            )
-            return synchronized_data, Event.NEW_BALANCE_DETECTED
-        else:
+            # Handle the case where the NFT transfer is not confirmed or no new owner is selected
+            self.context.logger.error("The NFT transfer has not been confirmed or no new owner was selected.")
             return self.synchronized_data, Event.ROUND_TIMEOUT
 
 
-    # def check_balance(self, expected_balances):
-    #     # A method to check the confirmed balances of agents via a blockchain node. The actual implementation would involve a query to the blockchain network.
+class WaitForNFTTransferRound(DegenerateRound):
+    """WaitForNFTTransferRound"""
+    # Represents the phase where agents wait for confirmation of NFT transfer
+    # and check all agents have the minimum required xDAI for gas.
 
-    #     time.sleep(30)  # The system waits for 30 seconds to give the network time to process the transaction and sync.
-    #     return True  # Assuming the balance check was successful, we return true. This is a simplification for illustration.
+    payload_class = WaitForFundsPayload  # Update as needed to reflect the context
+    payload_attribute = "confirmation"  # Confirmation of NFT ownership transfer
+    synchronized_data_class = SynchronizedData
 
-    # def end_block(self) -> Optional[Tuple[BaseSynchronizedData, Enum]]:
-    #     # Called at the end of the wait round to bring it to a close.
+    def end_block(self) -> Optional[Tuple[BaseSynchronizedData, Enum]]:
+        """
+        End the block by checking for NFT ownership transfer
+        and ensuring all agents have a minimum balance for gas.
+        """
+        # Check for NFT owner from the synchronized_data and see if it matches the expected owner
+        expected_nft_owner = self.synchronized_data.get_selected_receiver()
 
-    #     expected_balances = {
-    #         agent: amount > 1 for agent, amount in self.synchronized_data.agent_amounts.items()
-    #     }
-    #     # Sets up what balances are expected for each agent (more than 1 xDAI, in this scenario).
+        # Implement fetch_current_nft_owner to interact with the smart contract
+        current_nft_owner = self.fetch_current_nft_owner()  # Pseudo-code
 
-    #     funds_received = self.check_balance(expected_balances)
-    #     # Checks the actual balances against the expected ones.
+        if expected_nft_owner != current_nft_owner:
+            self.context.logger.warning("Waiting for NFT transfer confirmation.")
+            return self.synchronized_data, Event.ROUND_TIMEOUT
 
-    #     if funds_received:
-    #         return self.synchronized_data, Event.NEW_BALANCE_DETECTED
-    #         # If the funds have been received as expected, returns the event 'NEW_BALANCE_DETECTED' indicating that the process can move forward.
+        # Check if all agents have a minimum balance for gas
+        for agent in self.synchronized_data.registered_agents:
+            if self.get_agent_balance(agent) < 0.1:
+                self.context.logger.error(f"Agent {agent} needs more xDAI for gas.")
+                return self.synchronized_data, Event.ROUND_TIMEOUT
 
-    #     else:
-    #         return self.synchronized_data, Event.ROUND_TIMEOUT
-    #         # If the funds were not received, returns the event 'ROUND_TIMEOUT' to signal that the round did not complete successfully.
-
-    # def check_payload(self, payload: WaitForFundsPayload) -> None: #do i need this?
-    #     """Check payload."""
-    #     # This would be a method to verify the payload data – that it has the necessary and correctly formatted information. 
-
-    #     raise NotImplementedError
-    #     # Not yet implemented, and would need to be properly developed to match the payload verification needs of this particular round.
-
-    # def process_payload(self, payload: WaitForFundsPayload) -> None: #do i need this?
-    #     """Process payload."""
-    #     # This would be the method to process the payload data, to act upon it and update the state as necessary for the progress of the round.
-
-    #     raise NotImplementedError
-    #     # Like 'check_payload', this one is also not implemented and requires appropriate logic for processing the payload.
+        # If the NFT is transferred and all agents have the minimum xDAI balance, progress to the next round
+        self.synchronized_data.update_current_nft_owner(expected_nft_owner)
+        self.context.logger.info(f"NFT is now held by {expected_nft_owner}.")
+        return self.synchronized_data, Event.DONE
 
 
 class ConsensusTendermintServiceAbciApp(AbciApp[Event]):
     """ConsensusTendermintServiceAbciApp"""
-    # This class is the main application that orchestrates the different stages (rounds) of the consensus process using Tendermint, which is a blockchain consensus mechanism.
+    # This class orchestrates the Tendermint consensus mechanism within the application.
 
-    initial_round_cls: AppState = WaitForFundsRound
-    # Specifies the first stage in the consensus process, which is where the participants wait for confirmation of fund transfers.
+    # Updating the initial round according to new context
+    initial_round_cls: AppState = WaitForNFTTransferRound
+    initial_states: Set[AppState] = {WaitForNFTTransferRound}
 
-    initial_states: Set[AppState] = {WaitForFundsRound}
-    # Sets up the initial state or phase of the application, which is the 'WaitForFundsRound'.
-
+    # Transition function mapping needs to be updated based on new round names and logic
     transition_function: AbciAppTransitionFunction = {
-        # This is a map that defines how the application transitions from one round to another based on different events.
-
-        WaitForFundsRound: {
-            Event.DONE: StartVotingRound
+        # The round that waits for NFT transfer to be confirmed
+        WaitForNFTTransferRound: {
+            Event.DONE: StartVotingRound,  # Proceed if NFT is transferred and minimum balance is satisfied
+            Event.ROUND_TIMEOUT: WaitForNFTTransferRound  # Retry/wait if the round times out
         },
-        # If the 'WaitForFundsRound' completes successfully ('DONE'), then the next stage is 'StartVotingRound'.
-
+        # The round where agents vote for the next NFT holder
         StartVotingRound: {
-            Event.DONE: CheckResultsRound,
-            Event.NO_MAJORITY: StartVotingRound,
-            Event.ROUND_TIMEOUT: WaitForFundsRound
+            Event.DONE: CheckResultsRound,  # Move to checking results if voting is done
+            Event.NO_MAJORITY: StartVotingRound,  # No majority, revote
+            Event.ROUND_TIMEOUT: WaitForNFTTransferRound  # Timeout, go back to waiting for NFT transfer
         },
-        # Defines what happens after 'StartVotingRound', such as moving to the 'CheckResultsRound', starting the voting over, or reverting to waiting for funds, depending on the event.
-
+        # Round to determine the majority vote for the next NFT holder
         CheckResultsRound: {
-            Event.DONE: TransferFundsRound,
-            Event.NO_MAJORITY: StartVotingRound
+            Event.DONE: TransferNFTRound,  # If majority found, proceed with NFT transfer
+            Event.NO_MAJORITY: StartVotingRound  # No majority, revote
         },
-        # After checking results ('CheckResultsRound'), if successful ('DONE'), proceed to transfer funds ('TransferFundsRound'). If no clear decision is made ('NO_MAJORITY'), start voting again.
-
-        TransferFundsRound: {
-            Event.DONE: WaitForFundsRound,
-            Event.ROUND_TIMEOUT: WaitForFundsRound
-        }
-        # Once funds are transferred, either go back to waiting for funds ('WaitForFundsRound') or stay in the same round if there's a timeout.
-
+        # Round to oversee the NFT transfer after a majority vote
+        TransferNFTRound: {
+            Event.DONE: WaitForNFTTransferRound,  # Once NFT transfer is confirmed, go back to waiting for the next transfer
+            Event.ROUND_TIMEOUT: WaitForNFTTransferRound  # Timeout, retry/wait
+        },
+        
     }
     final_states: Set[AppState] = set()
-    # Defines any final states for the application; here, it's an empty set, meaning no specific final states are defined.
-
     event_to_timeout: EventToTimeout = {}
-    # Maps events to timeouts, but it's empty in this structure, meaning there's no default timeout behavior provided.
-
     cross_period_persisted_keys: FrozenSet[str] = frozenset()
-    # Determines which state keys should be kept across different phases or rounds. Currently, no keys are specified.
-
     db_pre_conditions: Dict[AppState, Set[str]] = {
-        WaitForFundsRound: [],
+        # Pre-conditions for entering round states
+        WaitForNFTTransferRound: set(),
     }
-    # Specifies any conditions that must be met before entering a particular state, such as `WaitForFundsRound`. In this case, no pre-conditions are required.
-
     db_post_conditions: Dict[AppState, Set[str]] = {
-        # Similar to pre-conditions, this defines conditions that should be met after exiting a state. It's empty here, indicating no specific post-conditions.
+        # Post-conditions after exiting round states
     }
