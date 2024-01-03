@@ -154,8 +154,8 @@ class StartVotingBehaviour(ConsensusTendermintServiceBaseBehaviour):
             performative=ContractApiMessage.Performative.GET_STATE,
             dialogue_reference=contract_api_dialogues.new_self_initiated_dialogue_reference(),
             ledger_id=ledger_api.identifier,
-            contract_id=str(self.context.contracts.hot_potato.contract_id),
-            contract_address=str(self.params.hot_potato_contract_address),
+            contract_id=str(self.params.nft_contract_id),
+            token_id=str(self.params.nft_token_id),
             callable="get_balances",
             kwargs=ContractApiMessage.Kwargs(kwargs),
         )
@@ -192,7 +192,7 @@ class TransferFundsBehaviour(TickerBehaviour):
         self.ledger_api = EthereumApi(**self.context.ledger_apis.apis.get("ethereum"))
         
         
-        # Placeholder: Load contract and token id from AEA config
+        #Load contract and token id from AEA config
         self.contract_id = self.context.params.nft_contract_id
         self.token_id = self.context.params.nft_token_id
 
@@ -247,7 +247,7 @@ class WaitForNFTTransferBehaviour(TickerBehaviour):
         # Fetch details from the `aea-config.yaml` file
         self.contract_id = self.context.params.nft_contract_id
         self.token_id = self.context.params.nft_token_id
-        self.expected_new_owner = self.context.params.expected_new_owner
+        # self.expected_new_owner = self.context.params.expected_new_owner # This isn't relevant I don't think
 
     def act(self) -> None:
         """Perform async action to confirm NFT transfer."""
@@ -258,16 +258,15 @@ class WaitForNFTTransferBehaviour(TickerBehaviour):
         new_owner_query = nft_contract.functions.get_owner(self.token_id)
 
         # Using `self.ledger_api.api_call()` to make a non-blocking contract call
-        # which may be part of your actual ledger API implementation
         new_owner = self.ledger_api.api_call(new_owner_query)
 
         if new_owner == self.expected_new_owner:
             self.context.logger.info(f"NFT (Token ID: {self.token_id}) ownership confirmed for {new_owner}.")
-            # Do something such as updating state or triggering next behaviour
+            
             
         else:
             self.context.logger.warning(f"NFT (Token ID: {self.token_id}) not yet confirmed for {self.expected_new_owner}.")
-            # Continue waiting for transfer confirmation
+            
 
     def tick_interval(self) -> float:
         """Specify the tick interval."""
@@ -286,10 +285,6 @@ class ConsensusTendermintServiceRoundBehaviour(AbstractRoundBehaviour):
         TransferFundsBehaviour,
         WaitForNFTTransferBehaviour,
     }
-
-    def setup(self) -> None:
-        """Setup logic, e.g., initialize variables or state."""
-        # Setup code here
 
     def act(self) -> None:
         """Switch to the appropriate behaviour based on the current round."""
@@ -329,17 +324,3 @@ class SynchronizedData(BaseSynchronizedData):
     def votes(self) -> Dict[str, str]:
         """Get all current votes."""
         return self._votes
-    
-    @property
-    def nft_owner(self) -> Address:
-        """Get the current owner of the NFT."""
-        # Fetches the NFT owner from the internal state
-        # This value should be updated after confirming NFT transfer
-        return self._nft_owner
-
-    def update_nft_owner(self, new_owner: Address) -> None:
-        """Update the current owner of the NFT."""
-        # Allows updating the NFT owner, should be called when confirming NFT transfer
-        self._nft_owner = new_owner
-
-    # Add methods to update this data that would be called from rounds.py
