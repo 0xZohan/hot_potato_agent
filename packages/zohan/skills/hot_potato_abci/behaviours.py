@@ -91,7 +91,7 @@ class ConsensusTendermintServiceBaseBehaviour(BaseBehaviour, ABC):
 
 
 class CheckResultsBehaviour(ABCIRoundBehaviour):
-    """CheckResultsBehaviour that checks the balance of an agent and compares it to a threshold."""
+    """CheckResultsBehaviour that checks whether the agent holds an NFT."""
 
     matching_round = CheckResultsRound
 
@@ -104,12 +104,12 @@ class CheckResultsBehaviour(ABCIRoundBehaviour):
         # Retrieve relevant data
         sender = self.context.agent_address
         ledger_id = self.context.default_ledger_id
-        contract_id = str(self.context.contracts.hot_potato.contract_id)
-        contract_address = str(self.params.hot_potato_contract_address)
+        contract_id = str(self.params.nft_contract_id)
+        token_id = str(self.params.nft_token_id)
 
         # Prepare the API call to get the balance
         kwargs = {"address": sender}
-        contract_api_call = self._prepare_api_call(ledger_id, contract_id, contract_address, "get_balance", kwargs)
+        contract_api_call = self._prepare_api_call(ledger_id, contract_id, token_id, "get_balance", kwargs)
 
         # Send the API call to the outbox (non-blocking)
         self.context.outbox.put_message(message=contract_api_call)
@@ -117,7 +117,7 @@ class CheckResultsBehaviour(ABCIRoundBehaviour):
         # Indicate the behavior is done for this step; response handling will occur elsewhere
         self.set_done()
 
-    def _prepare_api_call(self, ledger_id: str, contract_id: str, contract_address: str, callable: str, kwargs: dict) -> Message:
+    def _prepare_api_call(self, ledger_id: str, contract_id: str, token_id: str, callable: str, kwargs: dict) -> Message:
         """
         Prepare the API call for the contract.
         """
@@ -130,7 +130,7 @@ class CheckResultsBehaviour(ABCIRoundBehaviour):
             dialogue_reference=contract_api_dialogues.new_self_initiated_dialogue_reference(),
             ledger_id=ledger_id,
             contract_id=contract_id,
-            contract_address=contract_address,
+            token_id=token_id,
             callable=callable,
             kwargs=ContractApiMessage.Kwargs(kwargs)
         )
@@ -242,7 +242,7 @@ class WaitForNFTTransferBehaviour(TickerBehaviour):
     def setup(self):
         """Setup the behaviour."""
         # Placeholder for setup, if needed.
-        self.ledger_api = self.context.ledger_apis.get_api('ethereum')  # assuming the use of Ethereum
+        self.ledger_api = self.context.ledger_apis.get_api('ethereum')  # set as ethereum for now, need to look up naming convention for gnosis chain id
 
         # Fetch details from the `aea-config.yaml` file
         self.contract_id = self.context.params.nft_contract_id
@@ -265,7 +265,7 @@ class WaitForNFTTransferBehaviour(TickerBehaviour):
             
             
         else:
-            self.context.logger.warning(f"NFT (Token ID: {self.token_id}) not yet confirmed for {self.expected_new_owner}.")
+            self.context.logger.warning(f"NFT (Token ID: {self.token_id}) not yet confirmed for {new_owner}.")
             
 
     def tick_interval(self) -> float:
