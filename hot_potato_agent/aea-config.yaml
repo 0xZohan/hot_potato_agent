@@ -117,3 +117,10 @@ cert_requests:
   public_key: ${str:02e741c62d706e1dcf6986bf37fa74b98681bc32669623ac9ee6ff72488d4f59e8}
   save_path: .certs/acn_cosmos_9006.txt
 is_abstract: false
+contracts:
+  my_nft_contract:
+    instance: your_nft_contract_instance
+    class: YourNFTContractClass
+    # contract details like address and ledger id
+    contract_address: your_smart_contract_address_here #TBC
+    token_id: your_nft_token_id_here #TBC
