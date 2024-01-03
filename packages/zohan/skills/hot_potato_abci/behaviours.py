@@ -78,18 +78,8 @@ class ConsensusTendermintServiceBaseBehaviour(BaseBehaviour, ABC):
     @property
     def nft_owner(self) -> Address:
         """Return the current owner of the NFT."""
-        # This property should get the current NFT owner, 
-        # using a call to the appropriate smart contract function.
-        nft_owner_address = self.fetch_nft_owner()  # Replace with actual smart contract call
-        return nft_owner_address
-
-    async def fetch_nft_owner(self) -> Address:
-        """Fetch the NFT owner from the blockchain."""
-        # This function would interact with the blockchain's ledger API
-        # and return the address of the current owner of the NFT. 
-        # Below is a pseudo-code, replace it with actual logic.
-        nft_owner_address = await self.some_ledger_api_call()  # Replace with the actual API call
-        return nft_owner_address
+        # Gets the current NFT owner from the synchronized data
+        return self.synchronized_data.nft_owner
 
     @property
     def params(self) -> Params:
@@ -339,5 +329,17 @@ class SynchronizedData(BaseSynchronizedData):
     def votes(self) -> Dict[str, str]:
         """Get all current votes."""
         return self._votes
+    
+    @property
+    def nft_owner(self) -> Address:
+        """Get the current owner of the NFT."""
+        # Fetches the NFT owner from the internal state
+        # This value should be updated after confirming NFT transfer
+        return self._nft_owner
+
+    def update_nft_owner(self, new_owner: Address) -> None:
+        """Update the current owner of the NFT."""
+        # Allows updating the NFT owner, should be called when confirming NFT transfer
+        self._nft_owner = new_owner
 
     # Add methods to update this data that would be called from rounds.py
